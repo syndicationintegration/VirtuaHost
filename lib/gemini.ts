@@ -44,24 +44,55 @@ export interface SynthesizedSpeech {
   mimeType: string;
 }
 
+interface GenerateContentAudioResponse {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{ inlineData?: { data?: string; mimeType?: string } }>;
+    };
+  }>;
+  error?: { message?: string };
+}
+
+// Calls the Gemini REST endpoint directly rather than going through
+// @google/genai's generateContent() for this call: the SDK does its own
+// client-side model/capability validation, which lagged behind this
+// (very recent, preview) TTS model in at least one deployment environment
+// even though the model works fine against Google's actual API.
 export async function synthesizeSpeech(
   text: string,
   voice: string = DEFAULT_VOICE,
 ): Promise<SynthesizedSpeech> {
-  const ai = getClient();
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is not set");
+  }
 
-  const response = await ai.models.generateContent({
-    model: TTS_MODEL,
-    contents: text,
-    config: {
-      responseModalities: ["AUDIO"],
-      speechConfig: {
-        voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } },
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${TTS_MODEL}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-goog-api-key": apiKey,
       },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text }] }],
+        generationConfig: {
+          responseModalities: ["AUDIO"],
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } },
+          },
+        },
+      }),
     },
-  });
+  );
 
-  const inlineData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+  const body = (await res.json()) as GenerateContentAudioResponse;
+  if (!res.ok) {
+    throw new Error(body.error?.message ?? `Gemini TTS request failed with status ${res.status}`);
+  }
+
+  const inlineData = body.candidates?.[0]?.content?.parts?.[0]?.inlineData;
   if (!inlineData?.data) {
     throw new Error("Gemini returned no audio data");
   }
