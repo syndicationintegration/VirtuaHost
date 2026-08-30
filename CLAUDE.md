@@ -48,7 +48,7 @@ lib/store.ts               Netlify Blobs wrapper: saveClip/getClip/listClips
   `lib/gemini.js` and `lib/store.js`, call the handler function directly).
 - **One Gemini client, two models.** `lib/gemini.ts` lazily constructs a
   single `GoogleGenAI` client from `GEMINI_API_KEY` and uses it for both
-  `writeDjLine()` (a `gemini-2.5-flash`-class text model, for `mode: "ai"`
+  `writeDjLine()` (a `gemini-3.6-flash`-class text model, for `mode: "ai"`
   requests) and `synthesizeSpeech()` (a Gemini TTS model with
   `responseModalities: ["AUDIO"]`). `mode: "say"` requests skip
   `writeDjLine()` entirely and synthesize the given text verbatim.

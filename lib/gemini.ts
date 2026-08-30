@@ -1,7 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 
-const TEXT_MODEL = "gemini-2.5-flash";
-const TTS_MODEL = "gemini-2.5-flash-preview-tts";
+const TEXT_MODEL = "gemini-3.6-flash";
+const TTS_MODEL = "gemini-3.1-flash-tts-preview";
 export const DEFAULT_VOICE = "Kore";
 
 let client: GoogleGenAI | undefined;
