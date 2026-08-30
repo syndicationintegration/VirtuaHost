@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>VirtuaHost DJ — Test Console</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2e38;
+    --text: #e8e9ec;
+    --muted: #9aa1ad;
+    --accent: #6ea8fe;
+    --accent-text: #08122a;
+    --error: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.4;
+  }
+  main {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 2rem 1.25rem 4rem;
+  }
+  h1 {
+    font-size: 1.4rem;
+    margin: 0 0 0.25rem;
+  }
+  p.subtitle {
+    color: var(--muted);
+    margin: 0 0 2rem;
+    font-size: 0.9rem;
+  }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+  h2 {
+    font-size: 1rem;
+    margin: 0 0 1rem;
+  }
+  .mode-toggle {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+  .mode-toggle button {
+    flex: 1;
+    padding: 0.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  .mode-toggle button.active {
+    background: var(--accent);
+    color: var(--accent-text);
+    border-color: var(--accent);
+  }
+  textarea {
+    width: 100%;
+    min-height: 5rem;
+    padding: 0.6rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.9rem;
+    resize: vertical;
+  }
+  button.submit {
+    margin-top: 0.75rem;
+    padding: 0.6rem 1.2rem;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+  button.submit:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .status {
+    margin-top: 0.75rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .status.error {
+    color: var(--error);
+  }
+  .clip {
+    border-top: 1px solid var(--border);
+    padding: 0.85rem 0;
+  }
+  .clip:first-child {
+    border-top: none;
+    padding-top: 0;
+  }
+  .clip-meta {
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-bottom: 0.35rem;
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .clip-script {
+    font-size: 0.9rem;
+    margin-bottom: 0.5rem;
+  }
+  audio {
+    width: 100%;
+    height: 32px;
+  }
+  .empty {
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  .badge {
+    background: var(--border);
+    border-radius: 4px;
+    padding: 0.1rem 0.4rem;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>VirtuaHost DJ</h1>
+  <p class="subtitle">Test console for /api/generate and /api/clips.</p>
+
+  <section>
+    <h2>Generate a clip</h2>
+    <div class="mode-toggle">
+      <button type="button" id="mode-say" class="active">Say verbatim</button>
+      <button type="button" id="mode-ai">Ask Gemini to write it</button>
+    </div>
+    <textarea id="input-text" placeholder="Coming up, the top of the hour news."></textarea>
+    <div>
+      <button type="button" class="submit" id="submit-btn">Generate</button>
+    </div>
+    <div class="status" id="generate-status"></div>
+  </section>
+
+  <section>
+    <h2>Clips</h2>
+    <div id="clips-list" class="empty">Loading…</div>
+  </section>
+</main>
+
+<script>
+  let mode = "say";
+  const modeButtons = { say: document.getElementById("mode-say"), ai: document.getElementById("mode-ai") };
+  const inputEl = document.getElementById("input-text");
+  const submitBtn = document.getElementById("submit-btn");
+  const statusEl = document.getElementById("generate-status");
+  const clipsListEl = document.getElementById("clips-list");
+
+  function setMode(next) {
+    mode = next;
+    modeButtons.say.classList.toggle("active", mode === "say");
+    modeButtons.ai.classList.toggle("active", mode === "ai");
+    inputEl.placeholder =
+      mode === "say"
+        ? "Coming up, the top of the hour news."
+        : "hype up the next song, it's a summer anthem";
+  }
+  modeButtons.say.addEventListener("click", () => setMode("say"));
+  modeButtons.ai.addEventListener("click", () => setMode("ai"));
+
+  function formatDate(iso) {
+    try {
+      return new Date(iso).toLocaleString();
+    } catch {
+      return iso;
+    }
+  }
+
+  async function loadClips() {
+    try {
+      const res = await fetch("/api/clips");
+      if (!res.ok) throw new Error(`Request failed (${res.status})`);
+      const { clips } = await res.json();
+
+      if (!clips || clips.length === 0) {
+        clipsListEl.innerHTML = '<p class="empty">No clips yet — generate one above.</p>';
+        return;
+      }
+
+      clipsListEl.innerHTML = clips
+        .map(
+          (clip) => `
+        <div class="clip">
+          <div class="clip-meta">
+            <span class="badge">${clip.mode}</span>
+            <span>${formatDate(clip.createdAt)}</span>
+            <span>${clip.voice}</span>
+          </div>
+          <div class="clip-script">${escapeHtml(clip.scriptText)}</div>
+          <audio controls preload="none" src="/api/clips/${clip.id}"></audio>
+        </div>
+      `,
+        )
+        .join("");
+    } catch (err) {
+      clipsListEl.innerHTML = `<p class="empty">Failed to load clips: ${escapeHtml(err.message)}</p>`;
+    }
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str ?? "";
+    return div.innerHTML;
+  }
+
+  submitBtn.addEventListener("click", async () => {
+    const value = inputEl.value.trim();
+    if (!value) {
+      statusEl.textContent = mode === "say" ? "Enter text to speak." : "Enter a prompt for Gemini.";
+      statusEl.classList.add("error");
+      return;
+    }
+
+    submitBtn.disabled = true;
+    statusEl.classList.remove("error");
+    statusEl.textContent = "Generating (this calls Gemini live, can take a few seconds)…";
+
+    try {
+      const body = mode === "say" ? { mode: "say", text: value } : { mode: "ai", prompt: value };
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+
+      statusEl.textContent = `Done: "${data.scriptText}"`;
+      inputEl.value = "";
+      await loadClips();
+    } catch (err) {
+      statusEl.textContent = err.message;
+      statusEl.classList.add("error");
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  loadClips();
+</script>
+</body>
+</html>

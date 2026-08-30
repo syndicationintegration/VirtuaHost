@@ -19,6 +19,13 @@ once they exist.
    `GEMINI_TTS_VOICE` are optional.
 4. `netlify dev`
 
+## Test console
+
+`index.html` is a small static page served alongside the functions — open
+the site's root URL (e.g. `https://your-site.netlify.app/` or
+`http://localhost:8888/` under `netlify dev`) to generate clips and play
+back everything in `/api/clips` from a browser, without needing `curl`.
+
 ## API
 
 ### `POST /api/generate`

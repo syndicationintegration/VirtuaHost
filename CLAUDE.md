@@ -30,6 +30,7 @@ future work that will call `POST /api/generate`, not part of this repo yet.
 ## Architecture
 
 ```
+index.html                 static test console (no build step) for /api/generate and /api/clips
 netlify/functions/*.mts   thin Netlify Function adapters (routing/config only)
         |
 lib/handlers/*.ts         request handling logic, framework-agnostic (Request -> Response)
@@ -67,3 +68,7 @@ lib/store.ts               Netlify Blobs wrapper: saveClip/getClip/listClips
   Gemini call itself fails (script generation or speech synthesis), and
   `400` for malformed/missing request fields — this distinguishes "your
   request was bad" from "the upstream model call failed" for callers.
+- **No auth yet.** `/api/generate`, `/api/clips`, and `index.html` are all
+  open to anyone who can reach the deployed site — the eventual WhatsApp
+  allowlist was scoped for the command layer, not this core, so don't
+  assume request authentication exists when reading this code.
