@@ -29,7 +29,7 @@ async function boot({ draft, filled } = {}) {
   const call = async (m, p, b) => { const r = await fetch(base + p, { method: m, headers: { 'x-api-key': KEY, 'content-type': 'application/json' }, body: b ? JSON.stringify(b) : undefined }); return { status: r.status, json: await r.json().catch(() => null) }; };
   const st = (await call('POST', '/stations', { name: 'Green Light Radio', connection: 'pull', broadcastTz: DEN, siteStationId: 'glr' })).json;
   await call('PUT', `/stations/${st.id}/jit`, { enabled: true });
-  const slot = async (extra = {}) => (await call('POST', '/jit/slots', { stationId: st.id, kind: 'host-break', startsAt: new Date(clock.t + 8 * 60000).toISOString(), fallbackClipId: 'evergreen-break-1', script: { id: 'two-hosts', mode: 'draft' }, ...extra })).json;
+  const slot = async (extra = {}) => (await call('POST', '/jit/slots', { stationId: st.id, kind: 'host-break', startsAt: new Date(clock.t + 8 * 60000).toISOString(), leadSeconds: 600, fallbackClipId: 'evergreen-break-1', script: { id: 'two-hosts', mode: 'draft' }, ...extra })).json;
   return { hub, call, calls, st, slot, clock, store, close: () => { hub.stop(); server.close(); server.closeAllConnections?.(); } };
 }
 const items = async (t) => (await t.call('GET', '/jit/items')).json.items;

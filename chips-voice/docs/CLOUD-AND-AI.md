@@ -63,6 +63,13 @@ and shares clips.
 - Stored in `DATA_DIR/library.json` (a single file, written atomically) with the
   audio in `CLIPS_DIR`. A JSON file was chosen instead of SQLite so it runs on any
   Node version with nothing to compile; it is fine for thousands of clips.
+- With `DATABASE_URL` set (a Neon Postgres connection string, `sslmode=require`),
+  the clips and schedules are stored in one table, `app_store`, as one JSON row
+  per kind. On first start with an empty table, `DATA_DIR/library.json` is imported
+  once and kept as it was. Without `DATABASE_URL` nothing changes: the JSON file is
+  used. The database holds the library only; audio stays in `CLIPS_DIR`. The store
+  writes the whole row per save, so keep one writing process unless you have
+  tested concurrent use.
 - `CLIP_CACHE_MB` caps the audio on disk. Beyond it the least recently played
   clips that are not favorites are deleted; their entries stay and the audio is
   regenerated the next time they are played.

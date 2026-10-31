@@ -491,3 +491,21 @@ test('replace in shadow mode only says what it would replace', async () => {
   assert.strictEqual(t.radiodj.commands().length, 0);
   t.close();
 });
+
+test('a dynamic slot with no leadSeconds leads by 300 s plus the preceding item duration, or 300 s with no preceding item', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-lead-'));
+  fs.writeFileSync(path.join(dir, 'GLR 2026-10-22.json'), JSON.stringify({ name: 'GLR 2026-10-22', items: [
+    { time: '19:00:00', kind: 'song', artist: 'A', title: 'B', durationSeconds: 200 },
+    { time: '19:04:00', kind: 'dynamic-slot', dynamic: { slotKind: 'time-check', fallbackClipId: 'evergreen-time-1' } },
+    { time: '19:05:00', kind: 'dynamic-slot', dynamic: { slotKind: 'weather', leadSeconds: 90 } },
+    { time: '19:06:00', kind: 'dynamic-slot', dynamic: { slotKind: 'promo' } },
+  ] }));
+  const t = await boot({ scheduleDir: dir, now: () => Date.parse('2026-10-23T05:30:00Z') });
+  const day = (await t.call('GET', '/schedule', undefined, 'read-a')).json;
+  assert.strictEqual(day.items[1].dynamic.leadSeconds, 500);
+  assert.strictEqual(day.items[2].dynamic.leadSeconds, 90);
+  assert.strictEqual(day.items[3].dynamic.leadSeconds, 300);
+  assert.strictEqual(day.items[1].dynamic.precedingSeconds, 200);       // the swap deadline is the start of the item before
+  assert.strictEqual(day.items[3].dynamic.precedingSeconds, undefined); // no preceding duration, so the hub keeps the old rule
+  t.close();
+});

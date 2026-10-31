@@ -10,7 +10,7 @@ const { promisify } = require('util')
 const net = require('net');
 const http = require('http');
 const { createAuth } = require('./auth');
-const { createStore } = require('./lib/store');
+const { openStore } = require('./lib/store');
 const { createClips } = require('./lib/clips');
 const { createScheduler } = require('./lib/scheduler');
 const { createStorage } = require('./lib/storage');
@@ -55,6 +55,8 @@ const auth = createAuth({
   apiKey: process.env.API_KEY,
   internalKey: INTERNAL_KEY,
   sessionHours: parseFloat(process.env.SESSION_HOURS || '12'),
+  neonAuthUrl: process.env.NEON_AUTH_URL,
+  neonIssuer: process.env.NEON_AUTH_ISSUER,
 });
 if (!auth.enabled) {
   if (PLAYER === 'liquidsoap') {
@@ -95,7 +97,7 @@ const limits = {
 const tts = createTts(process.env);
 const llm = createLlm(process.env);
 const storage = createStorage(process.env);
-const store = createStore(path.join(DATA_DIR, 'library.json'), { clips: {}, schedules: {} });
+const store = openStore(path.join(DATA_DIR, 'library.json'), { clips: {}, schedules: {} }, { databaseUrl: process.env.DATABASE_URL });
 // Sound effects scripts can tag as [sfx:name]: built-ins plus uploads in SFX_DIR (see lib/sfx.js).
 const sfx = createSfx({
   dir: path.resolve(process.env.SFX_DIR || path.join(DATA_DIR, 'sfx')),

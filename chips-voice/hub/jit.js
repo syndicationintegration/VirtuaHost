@@ -15,6 +15,7 @@ const crypto = require('crypto');
 const tz = require('./tz');
 const { HubError } = require('./errors');
 const { validateText } = require('./validate');
+const { classify } = require('./freshness');
 
 const KINDS = ['time-check', 'weather', 'event-reminder', 'host-break', 'station-id', 'promo'];
 const FINAL = new Set(['shadow', 'queued', 'inserted', 'fallback', 'suppressed', 'rejected']);
@@ -83,7 +84,7 @@ function createJit({ store, audio, now = Date.now, fetchImpl = globalThis.fetch,
     const kind = input.kind !== undefined ? input.kind : existing && existing.kind;
     if (!KINDS.includes(kind)) throw new HubError(`kind must be one of: ${KINDS.join(', ')}`);
     if (!station.broadcastTz && !(typeof (input.startsAt ?? (existing && existing.startsAt)) === 'string' && /([zZ]|[+-]\d{2}:?\d{2})$/.test(String(input.startsAt)))) throw new HubError(`${station.name} has no broadcastTz: set it before giving local times`);
-    const lead = Number(input.leadSeconds !== undefined ? input.leadSeconds : existing ? existing.leadSeconds : 600);
+    const lead = Number(input.leadSeconds !== undefined ? input.leadSeconds : existing ? existing.leadSeconds : 300);
     if (!Number.isFinite(lead) || lead < 60 || lead > 3600) throw new HubError('leadSeconds must be between 60 and 3600');
     const startsAt = input.startsAt !== undefined ? parseWhen(input.startsAt, zoneOf(station)) : existing.startsAt;
     const constraints = cleanConstraints(input.constraints !== undefined ? input.constraints : existing && existing.constraints);
@@ -94,12 +95,19 @@ function createJit({ store, audio, now = Date.now, fetchImpl = globalThis.fetch,
     if (kind === 'event-reminder' && !constraints.event) throw new HubError('an event-reminder slot needs constraints.event { name, startsAt }');
     return {
       id: existing ? existing.id : id(5), stationId: station.id, kind, startsAt, leadSeconds: Math.round(lead),
+      ...(input.precedingSeconds !== undefined || (existing && existing.precedingSeconds !== undefined) ? { precedingSeconds: Math.round(Math.min(3600, Math.max(0, Number(input.precedingSeconds !== undefined ? input.precedingSeconds : existing.precedingSeconds) || 0))) } : {}),
       personaId: text(input.personaId !== undefined ? input.personaId : existing && existing.personaId, 80), fallbackClipId: text(input.fallbackClipId !== undefined ? input.fallbackClipId : existing && existing.fallbackClipId, 120),
-      ...(script ? { script } : {}), constraints, enabled: input.enabled !== undefined ? input.enabled !== false : existing ? existing.enabled !== false : true,
+      ...(script ? { script } : {}), constraints, songNeutral: input.songNeutral !== undefined ? input.songNeutral === true : !!(existing && existing.songNeutral), enabled: input.enabled !== undefined ? input.enabled !== false : existing ? existing.enabled !== false : true,
       source: existing ? existing.source : text(input.source, 20) === 'schedule' ? 'schedule' : 'manual', ref: existing ? existing.ref : text(input.ref, 80), createdAt: existing ? existing.createdAt : now(),
     };
   }
-  const slotView = (s) => { const st = find(s.stationId); return { ...s, startsAtIso: tz.formatIso(s.startsAt, zoneOf(st)), item: itemView(J().items.find((i) => i.slotId === s.id), false) || null }; };
+  const slotView = (s) => {
+    const st = find(s.stationId); const it = J().items.find((i) => i.slotId === s.id);
+    const filled = it && it.text && typeof it.text.filledIn === 'string' ? it.text.filledIn : '';
+    const fr = it && it.freshness ? it.freshness : (filled ? classify(filled) : null);
+    const songAudit = !!(s.songNeutral && fr && fr.reasons.some((r) => r.startsWith('song/track reference:')));      // a baked line that names a song on a song-neutral slot
+    return { ...s, startsAtIso: tz.formatIso(s.startsAt, zoneOf(st)), item: itemView(it, false) || null, ...(fr ? { freshness: fr.freshness, freshnessReasons: fr.reasons } : {}), ...(songAudit ? { songNeutralAudit: 'fail' } : {}) };
+  };
   function addSlot(input) { const slot = cleanSlot(input); J().slots.push(slot); store.save(); audit({ who: input.__who, action: 'slot.create', target: slot.id, result: 'ok' }); return slotView(slot); }
   function updateSlot(slotId, input) {
     const j = J(); const i = j.slots.findIndex((s) => s.id === slotId);
@@ -278,7 +286,9 @@ function createJit({ store, audio, now = Date.now, fetchImpl = globalThis.fetch,
   async function runPipeline(slotLike, station, item, opts) {
     const s = settings(); const sj = jitOf(station);
     const margin = s.safetyMarginSeconds * 1000;
-    const deadline = slotLike.startsAt - margin;
+    // Swap deadline: the moment the item before the slot starts playing (the agent refuses a swap onto the immediately-next item).
+    // Without a known preceding duration, it falls back to the old slot start minus the safety margin.
+    const deadline = slotLike.precedingSeconds !== undefined ? slotLike.startsAt - slotLike.precedingSeconds * 1000 : slotLike.startsAt - margin;
     const atMs = slotLike.startsAt;
     const policy = (slotLike.constraints && slotLike.constraints.languagePolicy) || s.personaPolicies[slotLike.personaId] || s.languagePolicy;
     const { prompt, whenPhrase: when } = buildPrompt(slotLike, station, now());
@@ -315,7 +325,9 @@ function createJit({ store, audio, now = Date.now, fetchImpl = globalThis.fetch,
         if (!attempt) j.texts[textKey] = written;
       }
       verdict = validateText(spokenOf(written.filledIn, !!slotLike.script), ctxFor(written));
-      item.text = { filledIn: written.filledIn, raw: written.raw }; item.textModel = written.textModel; item.chars = written.filledIn.length; item.validation = verdict;
+      if (verdict.ok && slotLike.songNeutral && classify(written.filledIn).reasons.some((r) => r.startsWith('song/track reference:')))
+        verdict = { ok: false, problems: [{ code: 'song-on-neutral-slot', message: 'The line names a song, so a song-neutral slot cannot use it.' }] };
+      item.text = { filledIn: written.filledIn, raw: written.raw }; item.freshness = { ...classify(written.filledIn), needsReview: false }; item.textModel = written.textModel; item.chars = written.filledIn.length; item.validation = verdict;
       item.estimate = estimate({ stationId: station.id, chars: item.chars, slot: slotLike });
       log(item, 'validate', verdict.ok, verdict.ok ? '' : verdict.problems.map((p) => p.code).join(', '));
       if (verdict.ok) break;
@@ -328,6 +340,7 @@ function createJit({ store, audio, now = Date.now, fetchImpl = globalThis.fetch,
     const ck = contentKey(written.filledIn, slotLike);
     let clip = j.clips[ck];
     if (clip && !audio.has(clip.audioHash)) clip = null;
+    if (clip && clip.needsReview) clip = null;  // held until a person approves the line; never reused while held
     if (!clip) {
       const over = capCheck(station, item.chars);
       if (over) return finish(item, 'fallback', over);
@@ -341,7 +354,7 @@ function createJit({ store, audio, now = Date.now, fetchImpl = globalThis.fetch,
       if (!mime) return finish(item, 'fallback', 'the audio is not a recognised format (mp3, wav or ogg)');
       const hash = sha256(buf);
       audio.put(hash, buf, mime);
-      clip = { audioHash: hash, bytes: buf.length, mime, chars: item.chars, createdAt: now(), uses: 0, speechModel: (r.json && r.json.speechModel) || '' };
+      clip = { audioHash: hash, bytes: buf.length, mime, chars: item.chars, createdAt: now(), uses: 0, speechModel: (r.json && r.json.speechModel) || '', freshness: item.freshness && item.freshness.freshness, needsReview: !!(item.freshness && item.freshness.needsReview) };
       j.clips[ck] = clip;
       const u = usageFor(station); u.chars += item.chars; u.requests += 1;
       item.cacheHit = false;
@@ -425,6 +438,16 @@ function createJit({ store, audio, now = Date.now, fetchImpl = globalThis.fetch,
   // ---------- review: approve / reject ----------
   const who = (by) => ({ by: text(by && by.by, 60) || 'unknown', via: text(by && by.via, 20) || 'control', note: text(by && by.note, 300) });
   function findItem(itemId) { const it = J().items.find((i) => i.id === itemId); if (!it) throw new HubError('no such item', 404); return it; }
+  // A person approves a clip that was held for review: it can be reused again.
+  function clearClipReview(clipKey, by) {
+    const clip = J().clips[clipKey];
+    if (!clip) throw new HubError('no such clip', 404);
+    clip.needsReview = false;
+    audit({ who: who(by).by, action: 'clip.approve', target: clipKey, result: 'ok' });
+    store.save();
+    return { key: clipKey, needsReview: false };
+  }
+
   function approve(itemId, by) {
     const item = findItem(itemId); const w = who(by);
     if (item.approval.state === 'rejected') throw new HubError('that item was rejected', 409);
@@ -628,7 +651,7 @@ function createJit({ store, audio, now = Date.now, fetchImpl = globalThis.fetch,
     return { estimate: est, item: itemView(item) };
   }
 
-  return { KINDS, tick, status, estimate, processSlot, addSlot, updateSlot, removeSlot, syncSlots, listSlots: (stationId) => J().slots.filter((s) => !stationId || s.stationId === stationId).map(slotView), approve, reject, queueFor, audioFor, ack, broadcast, updateSettings, setKill, setStationJit, listItems, getItem, itemAudio, runNow, alerts, settings: settingsView, jitView, whenPhrase };
+  return { KINDS, tick, status, estimate, processSlot, clearClipReview, addSlot, updateSlot, removeSlot, syncSlots, listSlots: (stationId) => J().slots.filter((s) => !stationId || s.stationId === stationId).map(slotView), approve, reject, queueFor, audioFor, ack, broadcast, updateSettings, setKill, setStationJit, listItems, getItem, itemAudio, runNow, alerts, settings: settingsView, jitView, whenPhrase };
 }
 
 module.exports = { createJit, whenPhrase, KINDS };

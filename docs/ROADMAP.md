@@ -25,6 +25,7 @@ What exists, what is being built, and what is planned. Anything that touches a r
 7. **Five-minute working lead for live slots,** measured to the swap deadline (the start of the item before the slot), so `leadSeconds` = 300 + the preceding item's duration. [FRESHNESS.md](FRESHNESS.md).
 8. **Show promos on a cadence** (next show and start time from the plan file, voices rotated evenly) and **simulated call-ins** (host, caller, host; caller voice bank; phone filter on the caller turn only). Both come from the Green Light scripts; details and acceptance tests in [GREEN-LIGHT-PARITY.md](GREEN-LIGHT-PARITY.md) sections 1 and 2. Open question for the station owner: whether callers must be marked as simulated.
 9. **The rest of the Green Light feature parity list** (recap back-announce, placement validator, spoken-name cleanup, DJ shifts, taste-based rotation, same-room voice profile, ops endpoints): [GREEN-LIGHT-PARITY.md](GREEN-LIGHT-PARITY.md).
+10. **Lore graph for host personas** (planned, not built): station lore as nodes and edges, imported from CSV or TXT, scoped per persona and approved before use, with a CLI explorer and retrieval into script prompts. See [tickets/LORE-GRAPH.md](tickets/LORE-GRAPH.md).
 
 ## Platform (not needed yet, but several of the items above depend on it)
 

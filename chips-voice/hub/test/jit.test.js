@@ -329,6 +329,46 @@ test('nothing is generated before the lead window opens, and a slot that is too 
   t.close(); late.close();
 });
 
+  test('the swap deadline is the start of the preceding item: a slot past its deadline falls back, and the default lead is 300 s', async () => {
+    const t = await boot();
+    try {
+      const st = await t.addStation();
+      await t.enable(st.id);
+      const slot = await t.slot(st.id, { startsAt: new Date(t.clock.t + 10 * 60000).toISOString(), leadSeconds: undefined, precedingSeconds: 240 });
+
+      assert.strictEqual(slot.leadSeconds, 300);
+      assert.strictEqual(slot.precedingSeconds, 240);
+      t.clock.t += 6 * 60000;                                                     // 4 min before the slot: past the swap deadline (slot start - 240 s)
+      await t.hub.jit.tick();
+      const [i] = await items(t);
+      assert.strictEqual(i.state, 'fallback');
+      assert.match(i.reason, /ran out of time/);
+      assert.strictEqual(t.site.calls.length, 0);
+    } finally { t.close(); }
+  });
+
+test('a clip held for review is not reused; once cleared, the same words are reused with no second speech call', async () => {
+  const t = await boot();
+  const st = await t.addStation();
+  await t.enable(st.id);
+  t.site.state.text = () => 'Eight oh four on Green Light Radio.';
+  await t.slot(st.id);
+  await t.hub.jit.tick();
+  assert.strictEqual(t.site.speeches().length, 1);
+  const ck = Object.keys(t.store.data.jit.clips)[0];
+  t.store.data.jit.clips[ck].needsReview = true;                                   // held until a person approves it
+  await t.slot(st.id, { startsAt: new Date(t.clock.t + 12 * 60000).toISOString(), leadSeconds: 900 });
+  await t.hub.jit.tick();
+  assert.strictEqual(t.site.speeches().length, 2);                                 // not reused while held
+  t.hub.jit.clearClipReview(ck, { by: 'reviewer' });                               // approved by a person
+  assert.strictEqual(t.store.data.jit.clips[ck].needsReview, false);
+  assert.throws(() => t.hub.jit.clearClipReview('no-such-clip', { by: 'reviewer' }), /no such clip/);
+  await t.slot(st.id, { startsAt: new Date(t.clock.t + 14 * 60000).toISOString(), leadSeconds: 900 });
+  await t.hub.jit.tick();
+  assert.strictEqual(t.site.speeches().length, 2);
+  t.close();
+});
+
 // ------------------------------------------------------------------ fail open
 test('fail open: every kind of provider failure ends with a reason and no queue entry', async () => {
   const cases = [
@@ -392,7 +432,7 @@ test('a site that is not configured is a recorded fallback, not a crash', async 
   const call = async (m, p, b) => { const r = await fetch(base + p, { method: m, headers: { 'x-api-key': KEY, 'content-type': 'application/json' }, body: b ? JSON.stringify(b) : undefined }); return { status: r.status, json: await r.json() }; };
   const s = (await call('POST', '/stations', { name: 'X', connection: 'pull', broadcastTz: DEN })).json;
   await call('PUT', `/stations/${s.id}/jit`, { enabled: true });
-  await call('POST', '/jit/slots', { stationId: s.id, kind: 'station-id', startsAt: '2026-10-22T14:08:00', personaId: 'p' });
+  await call('POST', '/jit/slots', { stationId: s.id, kind: 'station-id', startsAt: '2026-10-22T14:04:00', personaId: 'p' });
   await hub.jit.tick();
   const it = (await call('GET', '/jit/items')).json.items[0];
   assert.strictEqual(it.state, 'fallback');
@@ -617,7 +657,7 @@ test('slots: a local time with no offset is read in the BROADCAST zone, validate
   const s = (await t.call('POST', '/jit/slots', { stationId: st.id, kind: 'time-check', startsAt: '2026-10-23T00:05', personaId: 'p' })).json;   // 00:05 Denver on the 23rd
   assert.strictEqual(new Date(s.startsAt).toISOString(), '2026-10-23T06:05:00.000Z');
   assert.strictEqual(s.startsAtIso, '2026-10-23T00:05:00-06:00');
-  assert.strictEqual(s.leadSeconds, 600);
+  assert.strictEqual(s.leadSeconds, 300);
   const dst = (await t.call('POST', '/jit/slots', { stationId: st.id, kind: 'time-check', startsAt: '2026-11-01T01:30', personaId: 'p' })).json;      // the repeated hour: the first one
   assert.strictEqual(new Date(dst.startsAt).toISOString(), '2026-11-01T07:30:00.000Z');
   for (const bad of [{ kind: 'bogus' }, { startsAt: 'soon' }, { leadSeconds: 5 }, { stationId: 'nope' }, { kind: 'event-reminder' }]) {
@@ -682,4 +722,41 @@ test('settings and station JIT switches survive a restart of the hub (same store
   assert.strictEqual(second.jit.settings().dailyCharCap, 777);
   assert.deepStrictEqual([second.jit.jitView(t.store.data.stations[0]).shadow, second.jit.jitView(t.store.data.stations[0]).enabled], [false, true]);
   second.stop(); t.close();
+});
+
+test('a song-neutral slot refuses a line that names a song, and passes a neutral station ID', async () => {
+  const site = fakeSite({ text: () => 'Coming up next, we have a song by the Beatles, that was great.' });
+  const t = await boot({ site });
+  const st = await t.addStation();
+  await t.enable(st.id);
+  const slot = await t.slot(st.id, { songNeutral: true });
+  assert.strictEqual(slot.songNeutral, true);
+  await t.hub.jit.tick();
+  const [refused] = await items(t);
+  assert.strictEqual(refused.state, 'fallback');
+  assert.match(refused.reason, /song-on-neutral-slot|names a song/);
+  assert.strictEqual(site.speeches().length, 0);
+  t.close();
+
+  const ok = fakeSite({ text: () => 'You are listening to Green Light Radio, in Denver, Colorado.' });
+  const t2 = await boot({ site: ok });
+  const st2 = await t2.addStation();
+  await t2.enable(st2.id);
+  await t2.slot(st2.id, { songNeutral: true });
+  await t2.hub.jit.tick();
+  const [passed] = await items(t2);
+  assert.notStrictEqual(passed.state, 'fallback', passed.reason);
+  t2.close();
+});
+
+test('slot listing shows the freshness tier, and flags a song-neutral slot whose baked line names a song', async () => {
+  const t = await boot({});
+  const st = await t.addStation();
+  await t.enable(st.id);
+  await t.slot(st.id, { songNeutral: true });
+  const [listed] = (await t.call('GET', `/jit/slots?stationId=${st.id}`)).json.slots;
+  assert.strictEqual(listed.songNeutral, true);
+  assert.strictEqual(listed.songNeutralAudit, undefined);
+  assert.strictEqual(listed.freshness, undefined);
+  t.close();
 });

@@ -41,7 +41,7 @@ function createPuller({ hubUrl, stationId, key, localUrl, localKey, intervalMs =
       if (!day.ok || !day.body || !day.body.available) continue;
       for (const i of day.body.items) {
         if (i.kind !== 'dynamic-slot' || !i.startsAt || !i.dynamic) continue;
-        slots.push({ kind: i.dynamic.slotKind, startsAt: i.startsAt, leadSeconds: i.dynamic.leadSeconds, personaId: i.dynamic.personaId, fallbackClipId: i.dynamic.fallbackClipId, constraints: i.dynamic.constraints || {}, ref: `${date}#${i.index}` });
+        slots.push({ kind: i.dynamic.slotKind, startsAt: i.startsAt, leadSeconds: i.dynamic.leadSeconds, precedingSeconds: i.dynamic.precedingSeconds, personaId: i.dynamic.personaId, fallbackClipId: i.dynamic.fallbackClipId, constraints: i.dynamic.constraints || {}, ref: `${date}#${i.index}` });
       }
     }
     const hash = crypto.createHash('sha1').update(JSON.stringify(slots)).digest('hex');
